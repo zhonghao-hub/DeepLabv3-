@@ -14,20 +14,15 @@ from utils.saver import Saver
 from utils.summaries import TensorboardSummary
 from utils.metrics import Evaluator
 from dataloaders.utils import decode_segmap
+import matplotlib.pyplot as plt
 import cv2
-
+from torchvision.utils import make_grid
+from dataloaders.utils import decode_seg_map_sequence
 
 class Trainer(object):
     def __init__(self, args):
         self.args = args
         self.btch_size = args.test_batch_size
-
-        # Define Saver
-        # self.saver = Saver(args)
-        # self.saver.save_experiment_config()
-        # Define Tensorboard Summary
-        # self.summary = TensorboardSummary(self.saver.experiment_dir)
-        # self.writer = self.summary.create_summary()
         
         # Define Dataloader
         kwargs = {'num_workers': args.workers, 'pin_memory': True}
@@ -39,12 +34,7 @@ class Trainer(object):
                         output_stride=args.out_stride,
                         sync_bn=args.sync_bn,
                         freeze_bn=args.freeze_bn)
-        model.load_state_dict(torch.load('model60epoch_visdrone'))
-        # model1_dict = torch.load('model60epoch_visdrone')
-        # model_dict = model.state_dict()
-        # filtered_dict = {k: v for k, v in model1_dict.items() if k in model_dict}
-        # model_dict.update(filtered_dict)
-        # model.load_state_dict(model_dict, strict=False)
+
 
         train_params = [{'params': model.get_1x_lr_params(), 'lr': args.lr},
                         {'params': model.get_10x_lr_params(), 'lr': args.lr * 10}]
@@ -81,114 +71,114 @@ class Trainer(object):
 
         # Resuming checkpoint
         self.best_pred = 0.0
-        if args.resume is not None:
-            if not os.path.isfile(args.resume):
-                raise RuntimeError("=> no checkpoint found at '{}'" .format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            if args.cuda:
-                self.model.module.load_state_dict(checkpoint['state_dict'])
-            else:
-                self.model.load_state_dict(checkpoint['state_dict'])
-            if not args.ft:
-                self.optimizer.load_state_dict(checkpoint['optimizer'])
-            self.best_pred = checkpoint['best_pred']
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
 
-        # Clear start epoch if fine-tuning
         if args.ft:
             args.start_epoch = 0
 
     def training(self, epoch):
-
-
         train_loss = 0.0
-        # self.model.load_state_dict(torch.load('model60epoch_visdrone'))
+        self.model.load_state_dict(torch.load('model60epoch_visdrone'))
         self.model.train()
         tbar = tqdm(self.train_loader)
         num_img_tr = len(self.train_loader)
         for i, sample in enumerate(tbar):
             image, target = sample['image'], sample['label']
-            # print(image.shape)
-            # print(target.shape)
             if self.args.cuda:
                 image, target = image.cuda(), target.cuda()
+
             self.scheduler(self.optimizer, i, epoch, self.best_pred)
             self.optimizer.zero_grad()
             output = self.model(image)
-            print(output.shape)
-            # print(output.shape)
             loss = self.criterion(output, target)
             loss.backward()
             self.optimizer.step()
             train_loss += loss.item()
             tbar.set_description('Train loss: %.3f' % (train_loss / (i + 1)))
+
+
             # self.writer.add_scalar('train/total_loss_iter', loss.item(), i + num_img_tr * epoch)
 
             # Show 10 * 3 inference results each epoch
-        #     if i % (num_img_tr // 10) == 0:
-        #         global_step = i + num_img_tr * epoch
-        #         self.summary.visualize_image(self.writer, self.args.dataset, image, target, output, global_step)
-        #
+            # if i % (num_img_tr // 10) == 0:
+            #     global_step = i + num_img_tr * epoch
+            #     self.summary.visualize_image(self.writer, self.args.dataset, image, target, output, global_step)
+
         # self.writer.add_scalar('train/total_loss_epoch', train_loss, epoch)
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
         print('Loss: %.3f' % train_loss)
 
-        # if self.args.no_val:
-        #     # save checkpoint every epoch
-        #     is_best = False
-        #     self.saver.save_checkpoint({
-        #         'epoch': epoch + 1,
-        #         'state_dict': self.model.module.state_dict(),
-        #         'optimizer': self.optimizer.state_dict(),
-        #         'best_pred': self.best_pred,
-        #     }, is_best)
 
-        torch.save(self.model.state_dict(), 'model60epoch_visdrone')  ########################
+        # torch.save(self.model.state_dict(), 'model')  ########################
 
 
     def validation(self, epoch):
-        # self.model.load_state_dict(torch.load('model60epoch_visdrone'))  #######################
+        self.model.load_state_dict(torch.load('model60epoch_visdrone'))
         self.model.eval()
         self.evaluator.reset()
         tbar = tqdm(self.val_loader, desc='\r')
         test_loss = 0.0
         for i, sample in enumerate(tbar):
-            image, target = sample['image'], sample['label']
+            # image, target = sample['image'], sample['label']
+            image = sample['image']
             if self.args.cuda:
-                image, target = image.cuda(), target.cuda()
+                # image, target = image.cuda(), target.cuda()
+                image = image.cuda()
             with torch.no_grad():
                 output = self.model(image)
-            loss = self.criterion(output, target)
-            test_loss += loss.item()
-            tbar.set_description('Test loss: %.3f' % (test_loss / (i + 1)))
-            pred = output.data.cpu().numpy()
-            target = target.cpu().numpy()
-
-            trgt = target * 255###################################()
-
-            if epoch % 5 == 0:
-                img1 = trgt[0, :, :]############################
-                cv2.imwrite('visdrone/result/target_epoch_' + str(epoch) + '_' + str(i * self.btch_size) + '.png', img1)
-
-            pred = np.argmax(pred, axis=1)
+            # # print(target.shape)#(4,513,513)
+            # loss = self.criterion(output, target)
+            # test_loss += loss.item()
+            # tbar.set_description('Test loss: %.3f' % (test_loss / (i + 1)))
 
 
-            prd = pred * 255############################
-            if epoch % 5 == 0:
-                img1 = prd[0, :, :]###############################
-                img1 = decode_segmap(img1, dataset='coco')
-                cv2.imwrite('visdrone/result/predict_epoch_' + str(epoch) + '_' + str(i * self.btch_size) + '.png', img1)
 
-            # Add batch sample into evaluator
-            self.evaluator.add_batch(target, pred)
 
-        # Fast test during the training
-        Acc = self.evaluator.Pixel_Accuracy()
-        Acc_class = self.evaluator.Pixel_Accuracy_Class()
-        mIoU = self.evaluator.Mean_Intersection_over_Union()
-        FWIoU = self.evaluator.Frequency_Weighted_Intersection_over_Union()
+            image = image.clone().cpu().data.numpy().transpose([0,2,3,1])
+
+
+            # trgt = decode_seg_map_sequence(torch.squeeze(target[:3], 1).detach().cpu().numpy(),
+            #                                            dataset='coco').cpu().numpy()#(4,513,513,3)
+            # trgt = trgt * 255
+
+            prd = decode_seg_map_sequence(torch.max(output, 1)[1].detach().cpu().numpy(),
+                                                       dataset='coco').cpu().numpy()#(4,513,513,3)
+            # print(prd.shape)
+
+            prd = prd * 255
+
+
+            for j in range(self.btch_size):##########################
+                if j < len(prd[:,0,0,0]):
+                    img = image[j, :, :, :]#(513,513,3)
+                    img = img[...,[2,1,0]]
+                    img *= (0.229, 0.224, 0.225)
+                    img += (0.485, 0.456, 0.406)
+                    img *= 255.0
+                    # cv2.imwrite('visdrone/result/img_epoch_' + str(epoch) + '_' + str(i * self.btch_size + j) + '.png', img)
+
+                    # img_trgt = trgt[j, :, :, :]
+                    # cv2.imwrite('visdrone/result/target_epoch_' + str(epoch) + '_' + str(i * self.btch_size + j) + '.png', img_trgt)
+
+                    img_prd = prd[j, :, :, :]  ###############################
+                    output = img + img_prd
+                    # cv2.imwrite('visdrone/result/predict_epoch_' + str(epoch) + '_' + str(i * self.btch_size + j) + '.png', img_prd)
+                    cv2.imwrite(
+                        'visdrone/result/'+ str(i * self.btch_size + j) + '.jpg',
+                        output)
+        #
+        #     pred = output.data.cpu().numpy()
+        #     pred = np.argmax(pred, axis=1)
+        #     target = target.cpu().numpy()
+        #     # print(pred.shape)
+        #     # print(target.shape)
+        #
+        #     self.evaluator.add_batch(target, pred)
+        #
+        # # Fast test during the training
+        # Acc = self.evaluator.Pixel_Accuracy()
+        # Acc_class = self.evaluator.Pixel_Accuracy_Class()
+        # mIoU = self.evaluator.Mean_Intersection_over_Union()
+        # FWIoU = self.evaluator.Frequency_Weighted_Intersection_over_Union()
         # self.writer.add_scalar('val/total_loss_epoch', test_loss, epoch)
         # self.writer.add_scalar('val/mIoU', mIoU, epoch)
         # self.writer.add_scalar('val/Acc', Acc, epoch)
@@ -196,19 +186,13 @@ class Trainer(object):
         # self.writer.add_scalar('val/fwIoU', FWIoU, epoch)
         print('Validation:')
         print('[Epoch: %d, numImages: %5d]' % (epoch, i * self.args.batch_size + image.data.shape[0]))
-        print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
-        print('Loss: %.3f' % test_loss)
+        # print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
+        # print('Loss: %.3f' % test_loss)
 
-        # new_pred = mIoU
-        # if new_pred > self.best_pred:
-        #     is_best = True
-        #     self.best_pred = new_pred
-        #     self.saver.save_checkpoint({
-        #         'epoch': epoch + 1,
-        #         'state_dict': self.model.module.state_dict(),
-        #         'optimizer': self.optimizer.state_dict(),
-        #         'best_pred': self.best_pred,
-        #     }, is_best)
+
+
+
+
 
 
 def main():
@@ -221,7 +205,7 @@ def main():
     parser.add_argument('--dataset', type=str, default='visdrone',
                         choices=['pascal', 'coco', 'cityscapes', 'visdrone'],
                         help='dataset name (default: pascal)')
-    parser.add_argument('--use-sbd', action='store_true', default=True,
+    parser.add_argument('--use-sbd', action='store_true', default=False,
                         help='whether to use SBD dataset (default: True)')
     parser.add_argument('--workers', type=int, default=4,
                         metavar='N', help='dataloader threads')
@@ -237,7 +221,7 @@ def main():
                         choices=['ce', 'focal'],
                         help='loss func type (default: ce)')
     # training hyper params
-    parser.add_argument('--epochs', type=int, default=30, metavar='N',
+    parser.add_argument('--epochs', type=int, default=1, metavar='N',
                         help='number of epochs to train (default: auto)')
     parser.add_argument('--start_epoch', type=int, default=0,
                         metavar='N', help='start epochs (default:0)')
@@ -303,7 +287,6 @@ def main():
             'coco': 30,
             'cityscapes': 200,
             'pascal': 50,
-            'visdrone': 30,
         }
         args.epochs = epoches[args.dataset.lower()]
 
@@ -315,10 +298,10 @@ def main():
 
     if args.lr is None:
         lrs = {
-            'coco': 0.007,
+            'coco': 0.01,
             'cityscapes': 0.01,
             'pascal': 0.007,
-            'visdrone': 0.01 ,
+            'visdrone':0.01,
         }
         args.lr = lrs[args.dataset.lower()] / (4 * len(args.gpu_ids)) * args.batch_size
 
@@ -329,13 +312,8 @@ def main():
     trainer = Trainer(args)
     print('Starting Epoch:', trainer.args.start_epoch)
     print('Total Epoches:', trainer.args.epochs)
-#######train+validation
-    for epoch in range(trainer.args.start_epoch, trainer.args.epochs):
-        trainer.training(epoch)
-        if not trainer.args.no_val and epoch % args.eval_interval == (args.eval_interval - 1):
-            trainer.validation(epoch)
-# ###validation only
-#     trainer.validation(1)
+
+    trainer.validation(1)
 
     # trainer.writer.close()
 

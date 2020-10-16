@@ -24,7 +24,7 @@ class COCOSegmentation(Dataset):
                  year='2017'):
         super().__init__()
         ann_file = os.path.join(base_dir, 'annotations/instances_{}{}.json'.format(split, year))
-        ids_file = os.path.join(base_dir, 'annotations/{}_ids_{}.pth'.format(split, year))
+        ids_file = os.path.join(base_dir, 'annotations/{}_ids_{}.pth'.format(split, year))####没有
         self.img_dir = os.path.join(base_dir, 'images/{}{}'.format(split, year))
         self.split = split
         self.coco = COCO(ann_file)
@@ -32,8 +32,8 @@ class COCOSegmentation(Dataset):
         if os.path.exists(ids_file):
             self.ids = torch.load(ids_file)
         else:
-            ids = list(self.coco.imgs.keys())
-            self.ids = self._preprocess(ids, ids_file)
+            ids = list(self.coco.imgs.keys())#获取所有images的ids
+            self.ids = self._preprocess(ids, ids_file)#获取所有符合条件的images的ids
         self.args = args
 
     def __getitem__(self, index):
@@ -45,7 +45,7 @@ class COCOSegmentation(Dataset):
         elif self.split == 'val':
             return self.transform_val(sample)
 
-    def _make_img_gt_point_pair(self, index):
+    def _make_img_gt_point_pair(self, index):#given imdex, 获取对应的img_ids， 再获取(_img, _target)
         coco = self.coco
         img_id = self.ids[index]
         img_metadata = coco.loadImgs(img_id)[0]
@@ -64,8 +64,8 @@ class COCOSegmentation(Dataset):
         new_ids = []
         for i in tbar:
             img_id = ids[i]
-            cocotarget = self.coco.loadAnns(self.coco.getAnnIds(imgIds=img_id))
-            img_metadata = self.coco.loadImgs(img_id)[0]
+            cocotarget = self.coco.loadAnns(self.coco.getAnnIds(imgIds=img_id))#根据images——ids获取annotation——ids， 在根据annotation——ids获取对应的annotations
+            img_metadata = self.coco.loadImgs(img_id)[0]#根据images——ids获取images
             mask = self._gen_seg_mask(cocotarget, img_metadata['height'],
                                       img_metadata['width'])
             # more than 1k pixels
@@ -134,12 +134,14 @@ if __name__ == "__main__":
 
     coco_val = COCOSegmentation(args, split='val', year='2017')
 
-    dataloader = DataLoader(coco_val, batch_size=4, shuffle=True, num_workers=0)
+    dataloader = DataLoader(coco_val, batch_size=1, shuffle=True, num_workers=0)
 
     for ii, sample in enumerate(dataloader):
         for jj in range(sample["image"].size()[0]):
             img = sample['image'].numpy()
             gt = sample['label'].numpy()
+            print(gt.shape)
+            print(gt)
             tmp = np.array(gt[jj]).astype(np.uint8)
             segmap = decode_segmap(tmp, dataset='coco')
             img_tmp = np.transpose(img[jj], axes=[1, 2, 0])
@@ -157,4 +159,5 @@ if __name__ == "__main__":
         if ii == 1:
             break
 
-    plt.show(block=True)
+    # plt.show(block=True)
+    plt.savefig("mygraph.png")
